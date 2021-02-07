@@ -5,12 +5,13 @@
 % Uses Adams f_functions code for form factors - H,C,N,F,S,I,Xe available.
 clear all 
 %close all 
-
 tstart = tic;
-%load('wigner_dist_n100_293k.mat'); % Reads geometries (Natom,Natom,Ntrj,Nts)
+
+% Read in geometries in Angstrom
+%load('wigner_dist_n100_293k.mat'); % (Natom,Natom,Ntrj,Nts)
 %Q = load('tol.dat');
 load('extended_trajs_213.mat')
-Q = geometries; % assumes geometries in angstrom
+Q = geometries; 
 [x,y,Ntraj,Nts] = size(Q);
 
 % Setup Options
@@ -81,7 +82,12 @@ if Nts > 1
         end
     end
     [QQ, TT] = meshgrid(qAng, tt);
-    mesh(QQ,TT,pdW');  
+    mesh(QQ,TT,pdW');
+    xlabel(['q (1/' char(197) ')'])
+    ylabel('time (fs)')
+    xlim([0 7])
 else % static plot
     plot(qAng, Wiam_tot);
+    xlabel(['q (1/' char(197) ')'])
+    xlim([0 7])
 end
