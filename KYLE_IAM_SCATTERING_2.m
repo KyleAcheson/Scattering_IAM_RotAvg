@@ -1,28 +1,32 @@
-% Kyle Acheson - 07/09/2010
+% Kyle Acheson - 07/09/2020
 % IAM rotationally averaged 1D scattering pattern calculator
-% NOW loops over Ntraj & Nts - NOW sum trajectories for tot. I(q) 
+% Can be used for X-ray scattering or electron diffraction
+% Works for static of time-dependent signals - will detect automatically
 % Uses Adams f_functions code for form factors - H,C,N,F,S,I,Xe available.
-%clear all 
+clear all 
 %close all 
 
 tstart = tic;
-
-%load('sf6xyz.mat'); % Reads distance matrix (Natom,Natom,Ntrj,Nts)
-
-%Q = geom; % must be in angstroms
+%load('wigner_dist_n100_293k.mat'); % Reads geometries (Natom,Natom,Ntrj,Nts)
+%Q = load('tol.dat');
+load('extended_trajs_213.mat')
+Q = geometries; % assumes geometries in angstrom
 [x,y,Ntraj,Nts] = size(Q);
 
-% Setup
-Ang=char(197);
-FLAGelec = 0; % 0 for x-ray, 1 for UED 
+% Setup Options
+FLAGelec = 1; % 0 for X-ray, 1 for UED
+tmax = 1000; % max time in fs
+exfrac = 10; % excitation fraction in percentage units
+%atmnum = [6 6 6 6 6 6 1 1 1 1 1 6 1 1 1 ]; % atoms
+atmnum = [6 16 16];
 au2ang = 0.52917721092d0;
 ang2au = 1/au2ang;
-Q = Q%*ang2au;
-atmnum = [54]; % atoms
-kin   = 12.d0*au2ang; % incident wave vector inv au
+kin = 1.8751e+03*au2ang; % wave vector - cs2 UED
+%kin   = 12.d0*au2ang; % incident wave vector au - cs2 Xray
 theta_lim = [0 pi]; % range of theta angles
-Nq = 481; % number of points over theta range 
-Nphi = 1; % number of phi - only theta matters in rot. average 
+Nq = 100000; % number of points over theta range 
+Q = Q*ang2au; % convert geometries to a.u.
+tt = linspace(0,tmax,Nts); % set time vector for plotting
 
 theta_min = theta_lim(1);
 theta_max = theta_lim(2);
@@ -30,31 +34,54 @@ qmin =2.d0*kin*sin(0.5d0*theta_min);
 qmax = 2.d0*kin*sin(0.5d0*theta_max);
 q = linspace(qmin,qmax,Nq); % linear in q
 qAng = q*ang2au; % q in inv Ang
-
-
+qAng = qAng(qAng<8*pi); % set the limit of q 
+Nq = length(qAng); % redefine
+q = q(1:Nq);
 
 [FF,fq]  = get_scattering_factors(qAng,atmnum,FLAGelec); % NB: call using q in Angstroms^(-1)
 Iat      = sum(fq.^2); % atomic scattering term 
 
-Wiam_tot = zeros(Ntraj,Nq,Nts);
-for ts=1:Nts % loop over trajs and time steps
-    Wiam = zeros(Ntraj,Nq);
-    Q = Q(:,:,:,ts);
-    for traj=1:Ntraj
-        tot = zeros(1,Nq);
-        sinQ = zeros(1,Nq);
+Wiam_tot = zeros(Nq,Nts);
+for ts=1:Nts % loop over time steps
+    Wiam = zeros(Ntraj,Nq); % init scattering matrix for N trajs
+    D = Q(:,:,:,ts); % geometry at each time-step
+    for traj=1:Ntraj % loop over trajs
+        Imol = zeros(1,Nq); % init for each traj at each time step
+        sinQ = zeros(1,Nq); 
         for a=1:x
             for b=a+1:x
-                DQ = q(1:Nq)*norm(Q(a,1:3,traj)-Q(b,1:3,traj)); %qRij
+                DQ = q(1:Nq)*norm(D(a,1:3,traj)-D(b,1:3,traj)); %qRij
                 sinQ(1:Nq) = sin(DQ(1:Nq))./DQ(1:Nq); % Sin(qRij)/qRij
                 ind = find(abs(DQ)<1.d-9); % check q=0 limit
                 sinQ(ind) = 1.d0;
-                tot(1:Nq) = tot(1:Nq) + 2.d0*(squeeze(FF(a,b,1:Nq)).').*sinQ(1:Nq);
+                Imol(1:Nq) = Imol(1:Nq) + 2.d0*(squeeze(FF(a,b,1:Nq)).').*sinQ(1:Nq); 
             end
         end
-        Wiam(traj,1:Nq) = tot(1:Nq) +Iat; % add atomic term
+        
+        if FLAGelec == 0
+            Wiam(traj,1:Nq) = Imol(1:Nq) + Iat; % for each traj - add atomic term if X-ray
+        else
+            Wiam(traj,1:Nq) = (qAng .* Imol(1:Nq)) ./ Iat; %  s*Imol/Iat if electron scattering
+        end
     end
-    Wiam_tot(1:Ntraj,1:Nq,ts) = Wiam; % total scattering for all trajs
+    
+    %Wiam = 0.25*Wiam; % (1/2me^2)
+    Wiam_avg = sum(Wiam,1)./Ntraj; 
+    Wiam_tot(1:Nq,ts) = Wiam_avg;
 end
-Wiam_tot = Wiam_tot*0.25; % (e/2m_e)^2 in a.u.
-Wiam_avg = sum(Wiam_tot,1)./Ntraj; % Ehrenfest wf scattering - equal weights = avg.
+
+
+if Nts > 1
+    pdW = zeros(Nq,Nts);
+    for ts=1:Nts
+        if FLAGelec == 0 % if not static, calculate percentage diff and plot
+            pdW(1:Nq,ts) = exfrac*( Wiam_tot(1:Nq,ts) - Wiam_tot(1:Nq,1) ) ./ Wiam_tot(1:Nq,1);
+        else
+            pdW(1:Nq,ts) = exfrac*( Wiam_tot(1:Nq,ts) - Wiam_tot(1:Nq,1) );
+        end
+    end
+    [QQ, TT] = meshgrid(qAng, tt);
+    mesh(QQ,TT,pdW');  
+else % static plot
+    plot(qAng, Wiam_tot);
+end
